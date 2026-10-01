@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Basketball Video Analyzer Pro</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* タッチスクロール防止（キャンバス描画時） */
+        .no-select {
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        /* 動画とキャンバスの重ね合わせスタイル */
+        .video-container {
+            position: relative;
+            width: 100%;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            border-radius: 0.75rem;
+        }
+        #videoPlayer {
+            width: 100%;
+            max-height: 70vh;
+            object-fit: contain;
+        }
+        #drawingCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* デフォルトは操作不可 */
+            touch-action: none;
+        }
+        #drawingCanvas.active {
+            pointer-events: auto; /* 描画モード時に操作可能 */
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col font-sans no-select">
+
+    <!-- ヘッダー -->
+    <header class="bg-slate-800 border-b border-slate-700 px-4 py-3 flex flex-wrap justify-between items-center gap-2 shadow-md">
+        <div class="flex items-center gap-3">
+            <div class="bg-orange-500 text-white p-2 rounded-lg font-bold flex items-center justify-center w-10 h-10 shadow-lg shadow-orange-500/30">
+                <i class="fa-solid font-bold text-xl fa-basketball"></i>
+            </div>
+            <div>
+                <h1 class="text-lg font-bold tracking-wide text-white">BB-Analyzer Pro</h1>
+                <p class="text-xs text-slate-400">バスケットボール戦術・動画分析アプリ</p>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <!-- 動画選択ボタン -->
+            <label class="bg-orange-600 hover:bg-orange-500 text-white text-xs md:text-sm font-semibold px-3 py-2 rounded-lg cursor-pointer transition flex items-center gap-2 shadow">
+                <i class="fa-solid fa-file-video"></i>
+                <span>動画を開く</span>
+                <input type="file" id="videoInput" accept="video/*" class="hidden">
+            </label>
+
+            <!-- サンプル動画ボタン -->
+            <button id="loadSampleBtn" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs md:text-sm px-3 py-2 rounded-lg transition flex items-center gap-1">
+                <i class="fa-solid fa-play"></i>
+                <span>サンプル</span>
+            </button>
+
+            <!-- エクスポート/インポート -->
+            <button id="exportDataBtn" title="分析データを保存" class="bg-slate-700 hover:bg-slate-600 text-slate-200 p-2 rounded-lg text-sm transition">
+                <i class="fa-solid fa-download"></i>
+            </button>
+            <label title="分析データを読み込み" class="bg-slate-700 hover:bg-slate-600 text-slate-200 p-2 rounded-lg text-sm cursor-pointer transition">
+                <i class="fa-solid fa-upload"></i>
+                <input type="file" id="importDataInput" accept=".json" class="hidden">
+            </label>
+        </div>
+    </header>
+
+    <!-- メインコンテンツ (iPad向け2カラム) -->
+    <main class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 overflow-hidden max-w-[1600px] w-full mx-auto">
+
+        <!-- 左カラム：動画＆描画キャンバス (lg:col-span-8) -->
+        <section class="lg:col-span-8 flex flex-col gap-3">
+            
+            <!-- 動画プレイヤー領域 -->
+            <div id="videoWrapper" class="video-container shadow-2xl border border-slate-800">
+                <video id="videoPlayer" playsinline>
+                    <source src="" type="video/mp4">
+                    お使いのブラウザは動画再生に対応していません。
+                </video>
+                <canvas id="drawingCanvas"></canvas>
+            </div>
+
+            <!-- 動画・描画コントロールパネル -->
+            <div class="bg-slate-800 p-3 rounded-xl border border-slate-700 flex flex-wrap justify-between items-center gap-3">
+                
+                <!-- 再生コントロール -->
+                <div class="flex items-center gap-2">
+                    <button id="rewindBtn" class="bg-slate-700 hover:bg-slate-600 p-2.5 rounded-lg text-slate-200 transition" title="5秒戻る">
+                        <i class="fa-solid fa-rotate-left"></i> -5s
+                    </button>
+                    <button id="playPauseBtn" class="bg-orange-500 hover:bg-orange-400 text-white px-4 py-2.5 rounded-lg font-bold transition flex items-center justify-center w-12">
+                        <i class="fa-solid fa-play text-lg"></i>
+                    </button>
+                    <button id="forwardBtn" class="bg-slate-700 hover:bg-slate-600 p-2.5 rounded-lg text-slate-200 transition" title="5秒進む">
+                        +5s <i class="fa-solid fa-rotate-right"></i>
+                    </button>
+                    <span id="timeDisplay" class="text-xs font-mono bg-slate-900 px-3 py-2 rounded-lg border border-slate-700 ml-1">00:00 / 00:00</span>
+                </div>
+
+                <!-- 描画（Apple Pencil / タッチ）コントロール -->
+                <div class="flex items-center gap-2 bg-slate-900/60 p-1.5 rounded-xl border border-slate-700/80">
+                    <button id="toggleDrawBtn" class="bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg text-xs md:text-sm font-semibold transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-pen"></i>
+                        <span>描画モード: OFF</span>
+                    </button>
+                    
+                    <div id="drawTools" class="flex items-center gap-2 opacity-50 pointer-events-none transition-all">
+                        <!-- 色選択 -->
+                        <div class="flex items-center gap-1 bg-slate-800 p-1 rounded-lg">
+                            <button class="color-picker-btn w-5 h-5 rounded-full bg-red-500 ring-2 ring-white" data-color="#ef4444"></button>
+                            <button class="color-picker-btn w-5 h-5 rounded-full bg-yellow-400" data-color="#facc15"></button>
+                            <button class="color-picker-btn w-5 h-5 rounded-full bg-blue-500" data-color="#3b82f6"></button>
+                            <button class="color-picker-btn w-5 h-5 rounded-full bg-white" data-color="#ffffff"></button>
+                        </div>
+                        <!-- 消去 -->
+                        <button id="clearCanvasBtn" class="bg-slate-700 hover:bg-red-900/60 hover:text-red-300 text-slate-300 p-1.5 rounded-lg text-xs transition" title="画面クリア">
+                            <i class="fa-solid fa-trash-can"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- クイック・タグ登録バー -->
+            <div class="bg-slate-800 p-3 rounded-xl border border-slate-700">
+                <div class="text-xs text-slate-400 font-semibold mb-2 flex justify-between items-center">
+                    <span><i class="fa-solid fa-bookmark text-orange-400 mr-1"></i> 現在のシーンをタグ付け記録</span>
+                    <span class="text-[10px] text-slate-500">（クリックでタイムスタンプを保存）</span>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <button class="add-tag-btn bg-blue-600/80 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition flex items-center gap-1 shadow" data-tag="オフェンス" data-color="blue">
+                        <i class="fa-solid fa-basketball"></i> オフェンス
+                    </button>
+                    <button class="add-tag-btn bg-emerald-600/80 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition flex items-center gap-1 shadow" data-tag="ディフェンス" data-color="emerald">
+                        <i class="fa-solid fa-shield-halved"></i> ディフェンス
+                    </button>
+                    <button class="add-tag-btn bg-purple-600/80 hover:bg-purple-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition flex items-center gap-1 shadow" data-tag="3Pシュート" data-color="purple">
+                        <i class="fa-solid fa-bullseye"></i> 3Pシュート
+                    </button>
+                    <button class="add-tag-btn bg-rose-600/80 hover:bg-rose-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition flex items-center gap-1 shadow" data-tag="TO / 課題" data-color="rose">
+                        <i class="fa-solid fa-triangle-exclamation"></i> TO / 課題
+                    </button>
+                    <button id="customTagBtn" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg transition flex items-center gap-1">
+                        <i class="fa-solid fa-plus"></i> カスタムメモ
+                    </button>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- 右カラム：タイムスタンプ一覧＆解説・メモ (lg:col-span-4) -->
+        <section class="lg:col-span-4 flex flex-col bg-slate-800 rounded-xl border border-slate-700 h-[calc(100vh-140px)] min-h-[500px]">
+            
+            <!-- リストヘッダー & フィルター -->
+            <div class="p-3 border-b border-slate-700 flex flex-col gap-2">
+                <div class="flex justify-between items-center">
+                    <h2 class="font-bold text-sm text-slate-200 flex items-center gap-2">
+                        <i class="fa-solid fa-list-check text-orange-400"></i> 分析ログ & タイムスタンプ
+                    </h2>
+                    <span id="logCount" class="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded-full">0 件</span>
+                </div>
+
+                <!-- フィルターボタン -->
+                <div class="flex gap-1 overflow-x-auto pb-1 text-[11px]">
+                    <button class="filter-btn active bg-orange-500 text-white px-2.5 py-1 rounded-md transition" data-filter="all">すべて</button>
+                    <button class="filter-btn bg-slate-700 text-slate-300 hover:bg-slate-600 px-2.5 py-1 rounded-md transition" data-filter="オフェンス">オフェンス</button>
+                    <button class="filter-btn bg-slate-700 text-slate-300 hover:bg-slate-600 px-2.5 py-1 rounded-md transition" data-filter="ディフェンス">ディフェンス</button>
+                    <button class="filter-btn bg-slate-700 text-slate-300 hover:bg-slate-600 px-2.5 py-1 rounded-md transition" data-filter="TO / 課題">TO/課題</button>
+                </div>
+            </div>
+
+            <!-- タイムスタンプカードリスト（スクロール領域） -->
+            <div id="timestampList" class="flex-1 overflow-y-auto p-3 flex flex-col gap-2.5">
+                <!-- 空の状態で表示するプレースホルダー -->
+                <div id="emptyState" class="text-center py-12 text-slate-500 flex flex-col items-center gap-2">
+                    <i class="fa-solid fa-film text-4xl mb-1 text-slate-600"></i>
+                    <p class="text-xs">記録されたシーンはありません。</p>
+                    <p class="text-[11px] text-slate-600">動画再生中に下部のタグボタンを押して<br>タイムスタンプを保存してください。</p>
+                </div>
+            </div>
+
+            <!-- フッター情報 -->
+            <div class="p-2 border-t border-slate-700 text-[10px] text-slate-500 text-center bg-slate-850">
+                iPadでの利用時は「画面収録」を併用すると音声解説動画を作成できます。
+            </div>
+        </section>
+
+    </main>
+
+    <!-- JavaScript アプリケーションロジック -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // DOM要素の取得
+            const videoPlayer = document.getElementById('videoPlayer');
+            const videoInput = document.getElementById('videoInput');
+            const loadSampleBtn = document.getElementById('loadSampleBtn');
+            const playPauseBtn = document.getElementById('playPauseBtn');
+            const rewindBtn = document.getElementById('rewindBtn');
+            const forwardBtn = document.getElementById('forwardBtn');
+            const timeDisplay = document.getElementById('timeDisplay');
+            
+            const canvas = document.getElementById('drawingCanvas');
+            const ctx = canvas.getContext('2d');
+            const toggleDrawBtn = document.getElementById('toggleDrawBtn');
+            const drawTools = document.getElementById('drawTools');
+            const clearCanvasBtn = document.getElementById('clearCanvasBtn');
+            
+            const timestampList = document.getElementById('timestampList');
+            const emptyState = document.getElementById('emptyState');
+            const logCount = document.getElementById('logCount');
+            const exportDataBtn = document.getElementById('exportDataBtn');
+            const importDataInput = document.getElementById('importDataInput');
+
+            // アプリケーションの状態
+            let timestamps = [];
+            let isDrawingMode = false;
+            let isDrawing = false;
+            let currentColor = '#ef4444'; // 初期色: 赤
+            let currentFilter = 'all';
+
+            // --- 1. 動画プレイヤー関連処理 ---
+
+            // 動画ファイル読み込み
+            videoInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const url = URL.createObjectURL(file);
+                    videoPlayer.src = url;
+                    videoPlayer.load();
+                    resetCanvas();
+                }
+            });
+
+            // サンプル動画読み込み（Big Buck Bunny Kurz版）
+            loadSampleBtn.addEventListener('click', () => {
+                videoPlayer.src = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
+                videoPlayer.load();
+                resetCanvas();
+            });
+
+            // 再生 / 一時停止
+            playPauseBtn.addEventListener('click', togglePlay);
+            videoPlayer.addEventListener('click', togglePlay);
+
+            function togglePlay() {
+                if (videoPlayer.paused) {
+                    videoPlayer.play();
+                    playPauseBtn.innerHTML = '<i class="fa-solid fa-pause text-lg"></i>';
+                } else {
+                    videoPlayer.pause();
+                    playPauseBtn.innerHTML = '<i class="fa-solid fa-play text-lg"></i>';
+                }
+            }
+
+            // 5秒スキップ・戻る
+            rewindBtn.addEventListener('click', () => videoPlayer.currentTime = Math.max(0, videoPlayer.currentTime - 5));
+            forwardBtn.addEventListener('click', () => videoPlayer.currentTime = Math.min(videoPlayer.duration, videoPlayer.currentTime + 5));
+
+            // 時間表示更新
+            videoPlayer.addEventListener('timeupdate', () => {
+                const cur = formatTime(videoPlayer.currentTime);
+                const dur = formatTime(videoPlayer.duration || 0);
+                timeDisplay.textContent = `${cur} / ${dur}`;
+            });
+
+            function formatTime(seconds) {
+                const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+                const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+                return `${m}:${s}`;
+            }
+
+            // --- 2. Apple Pencil / タッチ対応 手書きキャンバス処理 ---
+
+            function resizeCanvas() {
+                canvas.width = videoPlayer.clientWidth;
+                canvas.height = videoPlayer.clientHeight;
+            }
+
+            window.addEventListener('resize', resizeCanvas);
+            videoPlayer.addEventListener('loadedmetadata', resizeCanvas);
+
+            // 描画モード切替
+            toggleDrawBtn.addEventListener('click', () => {
+                isDrawingMode = !isDrawingMode;
+                if (isDrawingMode) {
+                    videoPlayer.pause(); // 描画時は動画を自動停止
+                    playPauseBtn.innerHTML = '<i class="fa-solid fa-play text-lg"></i>';
+                    canvas.classList.add('active');
+                    toggleDrawBtn.classList.replace('bg-slate-700', 'bg-orange-600');
+                    toggleDrawBtn.classList.replace('text-slate-300', 'text-white');
+                    toggleDrawBtn.querySelector('span').textContent = '描画モード: ON';
+                    drawTools.classList.remove('opacity-50', 'pointer-events-none');
+                    resizeCanvas();
+                } else {
+                    canvas.classList.remove('active');
+                    toggleDrawBtn.classList.replace('bg-orange-600', 'bg-slate-700');
+                    toggleDrawBtn.classList.replace('text-white', 'text-slate-300');
+                    toggleDrawBtn.querySelector('span').textContent = '描画モード: OFF';
+                    drawTools.classList.add('opacity-50', 'pointer-events-none');
+                }
+            });
+
+            // 色選択
+            document.querySelectorAll('.color-picker-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    document.querySelectorAll('.color-picker-btn').forEach(b => b.classList.remove('ring-2', 'ring-white'));
+                    e.target.classList.add('ring-2', 'ring-white');
+                    currentColor = e.target.dataset.color;
+                });
+            });
+
+            // キャンバスクリア
+            clearCanvasBtn.addEventListener('click', resetCanvas);
+            function resetCanvas() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+
+            // タッチ・Pencil・マウスを描画用イベントとして一括処理 (PointerEvents)
+            function getCanvasCoords(e) {
+                const rect = canvas.getBoundingClientRect();
+                return {
+                    x: e.clientX - rect.left,
+                    y: e.clientY - rect.top
+                };
+            }
+
+            canvas.addEventListener('pointerdown', (e) => {
+                if (!isDrawingMode) return;
+                isDrawing = true;
+                const pos = getCanvasCoords(e);
+                ctx.beginPath();
+                ctx.moveTo(pos.x, pos.y);
+                ctx.strokeStyle = currentColor;
+                ctx.lineWidth = 4;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+            });
+
+            canvas.addEventListener('pointermove', (e) => {
+                if (!isDrawing || !isDrawingMode) return;
+                const pos = getCanvasCoords(e);
+                ctx.lineTo(pos.x, pos.y);
+                ctx.stroke();
+            });
+
+            canvas.addEventListener('pointerup', () => isDrawing = false);
+            canvas.addEventListener('pointerleave', () => isDrawing = false);
+
+            // --- 3. タイムスタンプ・タグ管理処理 ---
+
+            document.querySelectorAll('.add-tag-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const tag = btn.dataset.tag;
+                    const color = btn.dataset.color;
+                    addTimestamp(tag, color);
+                });
+            });
+
+            document.getElementById('customTagBtn').addEventListener('click', () => {
+                const note = prompt('メモまたはカスタムタグを入力してください:');
+                if (note) {
+                    addTimestamp('メモ', 'slate', note);
+                }
+            });
+
+            function addTimestamp(tag, color, note = '') {
+                const time = videoPlayer.currentTime || 0;
+                const item = {
+                    id: Date.now(),
+                    time: time,
+                    formattedTime: formatTime(time),
+                    tag: tag,
+                    color: color,
+                    note: note
+                };
+                timestamps.push(item);
+                // 時間順にソート
+                timestamps.sort((a, b) => a.time - b.time);
+                renderTimestamps();
+            }
+
+            // リスト表示のレンダリング
+            function renderTimestamps() {
+                const filtered = currentFilter === 'all' 
+                    ? timestamps 
+                    : timestamps.filter(t => t.tag === currentFilter);
+
+                logCount.textContent = `${filtered.length} 件`;
+
+                if (filtered.length === 0) {
+                    emptyState.style.display = 'flex';
+                    timestampList.innerHTML = '';
+                    timestampList.appendChild(emptyState);
+                    return;
+                }
+
+                emptyState.style.display = 'none';
+                timestampList.innerHTML = '';
+
+                filtered.forEach(item => {
+                    const card = document.createElement('div');
+                    card.className = 'bg-slate-900 border border-slate-700/80 rounded-lg p-2.5 flex flex-col gap-2 hover:border-slate-500 transition group';
+                    
+                    const badgeColorClass = {
+                        blue: 'bg-blue-900/60 text-blue-300 border-blue-700',
+                        emerald: 'bg-emerald-900/60 text-emerald-300 border-emerald-700',
+                        purple: 'bg-purple-900/60 text-purple-300 border-purple-700',
+                        rose: 'bg-rose-900/60 text-rose-300 border-rose-700',
+                        slate: 'bg-slate-800 text-slate-300 border-slate-600'
+                    }[item.color] || 'bg-slate-800 text-slate-300 border-slate-600';
+
+                    card.innerHTML = `
+                        <div class="flex justify-between items-center">
+                            <button class="jump-btn bg-slate-800 hover:bg-orange-600 hover:text-white text-orange-400 font-mono text-xs font-bold px-2 py-1 rounded border border-slate-700 transition flex items-center gap-1" data-time="${item.time}">
+                                <i class="fa-solid fa-play text-[10px]"></i> ${item.formattedTime}
+                            </button>
+                            <span class="text-[11px] px-2 py-0.5 rounded border ${badgeColorClass} font-semibold">${item.tag}</span>
+                            <button class="delete-btn text-slate-500 hover:text-rose-400 text-xs p-1 transition" data-id="${item.id}" title="削除">
+                                <i class="fa-solid fa-xmark"></i>
+                            </button>
+                        </div>
+                        <input type="text" class="note-input bg-slate-800/80 text-xs text-slate-200 border border-slate-700/60 rounded px-2 py-1 focus:outline-none focus:border-orange-500 transition" placeholder="メモ・指示を入力..." value="${item.note}" data-id="${item.id}">
+                    `;
+
+                    // イベントリスナーの追加
+                    card.querySelector('.jump-btn').addEventListener('click', (e) => {
+                        videoPlayer.currentTime = parseFloat(e.currentTarget.dataset.time);
+                    });
+
+                    card.querySelector('.delete-btn').addEventListener('click', (e) => {
+                        const id = parseInt(e.currentTarget.dataset.id);
+                        timestamps = timestamps.filter(t => t.id !== id);
+                        renderTimestamps();
+                    });
+
+                    card.querySelector('.note-input').addEventListener('input', (e) => {
+                        const id = parseInt(e.currentTarget.dataset.id);
+                        const targetItem = timestamps.find(t => t.id === id);
+                        if (targetItem) targetItem.note = e.target.value;
+                    });
+
+                    timestampList.appendChild(card);
+                });
+            }
+
+            // フィルター切り替え
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    document.querySelectorAll('.filter-btn').forEach(b => {
+                        b.classList.remove('active', 'bg-orange-500', 'text-white');
+                        b.classList.add('bg-slate-700', 'text-slate-300');
+                    });
+                    e.target.classList.add('active', 'bg-orange-500', 'text-white');
+                    e.target.classList.remove('bg-slate-700', 'text-slate-300');
+                    currentFilter = e.target.dataset.filter;
+                    renderTimestamps();
+                });
+            });
+
+            // --- 4. データのエクスポート / インポート ---
+
+            // データ書き出し（JSON）
+            exportDataBtn.addEventListener('click', () => {
+                if (timestamps.length === 0) {
+                    alert('エクスポートするデータがありません。');
+                    return;
+                }
+                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(timestamps, null, 2));
+                const downloadAnchor = document.createElement('a');
+                downloadAnchor.setAttribute("href", dataStr);
+                downloadAnchor.setAttribute("download", `basketball_analysis_${new Date().toISOString().slice(0,10)}.json`);
+                document.body.appendChild(downloadAnchor);
+                downloadAnchor.click();
+                downloadAnchor.remove();
+            });
+
+            // データ読み込み（JSON）
+            importDataInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const importedData = JSON.parse(event.target.result);
+                        if (Array.isArray(importedData)) {
+                            timestamps = importedData;
+                            renderTimestamps();
+                            alert('分析データを正常に復元しました。');
+                        }
+                    } catch (err) {
+                        alert('JSONファイルの読み込みに失敗しました。');
+                    }
+                };
+                reader.readAsText(file);
+            });
+        });
+    </script>
+</body>
+</html>
